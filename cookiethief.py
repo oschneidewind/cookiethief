@@ -29,7 +29,7 @@ class SqliteCookieJar(http.cookiejar.CookieJar):
             for chunk in iter(fin.read, b''):
                 sql.write(chunk)
 
-            sqlite = sqlite3.connect(sql.name)
+            sqlite = stack.enter_context(sqlite3.connect(sql.name))
             # get a result as dict
             sqlite.row_factory = sqlite3.Row
 
