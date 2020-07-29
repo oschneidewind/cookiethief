@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 expandtab shiftwidth=4 softtabstop=4
 import configparser
+import contextlib
 import os
 import sys
 import tempfile
@@ -20,8 +21,9 @@ class FirefoxCookieError(SqliteCookieError):
 class SqliteCookieJar(http.cookiejar.CookieJar):
 
     def load(self, filename):
-        with tempfile.NamedTemporaryFile(suffix='.sqlite') as sql, \
-             open(filename, 'rb') as fin:
+        with contextlib.ExitStack() as stack:
+            sql = stack.enter_context(tempfile.NamedTemporaryFile(suffix='.sqlite'))
+            fin = stack.enter_context(open(filename, 'rb'))
 
             # Copy sqlite to tmpfile for avoid sqlite lock issues
             for chunk in iter(fin.read, b''):
