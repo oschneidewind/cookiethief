@@ -18,9 +18,15 @@ class FirefoxCookieError(SqliteCookieError):
     pass
 
 
-class SqliteCookieJar(http.cookiejar.CookieJar):
+class SqliteCookieJar(http.cookiejar.FileCookieJar):
 
-    def load(self, filename):
+    def load(self, filename=None, ignore_discard=False, ignore_expires=False):
+        if not filename:
+            if self.filename is not None:
+                filename = self.filename
+            else:
+                raise ValueError(http.cookiejar.MISSING_FILENAME_TEXT)
+
         with contextlib.ExitStack() as stack:
             sql = stack.enter_context(tempfile.NamedTemporaryFile(suffix='.sqlite'))
             fin = stack.enter_context(open(filename, 'rb'))
@@ -48,6 +54,9 @@ class SqliteCookieJar(http.cookiejar.CookieJar):
                                                    cdict['expiry'],
                                                    cdict['expiry'],
                                                    None, None, {})
+                    if (ignore_expires and cookie.is_expired) or \
+                       (ignore_discard and cookie.discard):
+                       continue
                     self.set_cookie(cookie)
                 except KeyError:
                     msg = "Coudn't convert db entry {} to cookie".format(cdict)
@@ -58,15 +67,6 @@ class SqliteCookieJar(http.cookiejar.CookieJar):
 
 
 class FirefoxCookieJar(SqliteCookieJar):
-
-    def load(self, filename=None):
-        if not filename:
-            profile = self.find_profile()
-            path = self.parse_profile(profile)
-            filename = os.path.join(path, 'cookies.sqlite')
-            if not filename:
-                raise FirefoxCookieError('file not Found '+filename)
-        super(FirefoxCookieJar, self).load(filename)
 
     def _getfromsql(self, sqlite):
         keys = ['host', 'path', 'isSecure', 'expiry', 'name', 'value']
@@ -118,8 +118,10 @@ class FirefoxCookieJar(SqliteCookieJar):
 
 
 def main():
-    cookiejar = FirefoxCookieJar()
-    # cookiejar.load('firefox/cookies.sqlite')
+    profile = FirefoxCookieJar.find_profile()
+    path = FirefoxCookieJar.parse_profile(profile)
+    cookiejar = FirefoxCookieJar(path + '/cookies.sqlite')
+
     cookiejar.load()
     out_cookiejar = http.cookiejar.MozillaCookieJar()
     for cookie in cookiejar:
