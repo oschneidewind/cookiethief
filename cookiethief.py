@@ -9,6 +9,7 @@ import tempfile
 import typing
 import sqlite3
 import http.cookiejar
+from pathlib import Path
 
 
 class SqliteCookieError(Exception):
@@ -52,6 +53,12 @@ class SqliteCookieJar(http.cookiejar.FileCookieJar):
 
 class FirefoxCookieJar(SqliteCookieJar):
 
+    def __init__(self,filename=None, delayload=False, policy=None):
+        super().__init__(filename, delayload, policy)
+        if not filename:
+            # if no filename is given use default Profile
+            self.filebyprofile()
+
     def _cookiefromsql(self, sqlite):
         keys = ['host', 'path', 'isSecure', 'expiry', 'name', 'value']
         query = 'select {keys} from moz_cookies'.format(keys=','.join(keys))
@@ -78,52 +85,51 @@ class FirefoxCookieJar(SqliteCookieJar):
                 msg = f"Coudn't convert db entry {item} to cookie"
                 raise SqliteCookieError(msg) from exp
 
-    @staticmethod
-    def find_profile():
-        platform = {
-            'darwin': [os.path.expanduser('~'), 'Library',
-                       'Application Support', 'Firefox', 'profiles.ini'],
-            'linux':  [os.path.expanduser('~'), '.mozilla',
-                       'firefox', 'profiles.ini'],
-            'win32':  [os.getenv('APPDATA', ''), 'Mozilla',
-                       'Firefox', 'profiles.ini']}
-        try:
-            return os.path.join(*platform[sys.platform])
-        except KeyError:
-            msg = 'Unsupported Operation System ' + sys.platform
-            raise FirefoxCookieError(msg)
+    def filebyprofile(self, name: str = None) -> str:
+        '''
+        This method parses the Firefox profile to determine the path where the
+        cookie database is stored.
 
-    @staticmethod
-    def parse_profile(profile):
-        # TODO Rework required make this able to deale with several Profiles
+            name ~ Name of the profile to be scanned, or None then the default profile is used.
+        '''
+        platform = {
+            'darwin': Path(Path.home(), 'Library',
+                           'Application Support', 'Firefox', 'profiles.ini'),
+            'linux': Path(Path.home(), '.mozilla', 'firefox', 'profiles.ini'),
+            'win32': Path(os.path.expandvars(r'%APPDATA%\Mozilla\Firefox\profiles.ini')),
+        }
+        try:
+            inifile = platform[sys.platform]
+        except KeyError as err:
+            msg = f"Unsupported Operation System {sys.platform}"
+            raise FirefoxCookieError(msg) from err
+
         config = configparser.ConfigParser()
-        config.read(profile)
-        path = None
-        for section in config.sections():
-            if not section.startswith('Profile'):
-                continue
-            default = False
+        config.read(inifile)
+        profiles = filter(lambda x: x.startswith('Profile'),
+                          config.sections())
+        for profile in profiles:
             try:
-                currentpath = config.get(section, 'Path')
-                if config.getboolean(section, 'IsRelative'):
-                    base = os.path.dirname(profile)
-                    currentpath = os.path.join(base, currentpath)
-                if config.has_option(section, 'Default'):
-                    default = config.getboolean(section, 'Default')
-                if default or not path:
-                    path = os.path.normpath(currentpath)
-            except configparser.NoOptionError:
-                if section != 'General':
-                    raise FirefoxCookieError('Section is broken ' + section)
-        return path
+                path = Path(config.get(profile, 'Path'))
+                if config.getboolean(profile, 'IsRelative'):
+                    path = inifile.parent.joinpath(path)
+                if (name and config.get(profile, 'Name') == name) or \
+                   config.getboolean(profile, 'Default', fallback=False):
+
+                    # to satisfiy mypy convert to string here
+                    cookie_db = path.joinpath('cookies.sqlite')
+                    self.filename = str(cookie_db.absolute())
+                    return self.filename
+            except configparser.NoOptionError as err:
+                raise FirefoxCookieError(
+                    f"Don't understand Profile {profile} in {inifile}") from err
+        raise FirefoxCookieError(f"No default Profile in {inifile}")
 
 
 def main():
-    profile = FirefoxCookieJar.find_profile()
-    path = FirefoxCookieJar.parse_profile(profile)
-    cookiejar = FirefoxCookieJar(path + '/cookies.sqlite')
-
+    cookiejar = FirefoxCookieJar()
     cookiejar.load()
+
     out_cookiejar = http.cookiejar.MozillaCookieJar()
     for cookie in cookiejar:
         out_cookiejar.set_cookie(cookie)
