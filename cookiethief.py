@@ -60,8 +60,7 @@ class FirefoxCookieJar(SqliteCookieJar):
             self.filebyprofile()
 
     def _cookiefromsql(self, sqlite):
-        keys = ['host', 'path', 'isSecure', 'expiry', 'name', 'value']
-        query = 'select {keys} from moz_cookies'.format(keys=','.join(keys))
+        query = 'SELECT host, path, isSecure, expiry, name, value  FROM moz_cookies'
 
         cur = sqlite.cursor()
         cur.execute(query)
